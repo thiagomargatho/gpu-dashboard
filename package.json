@@ -1,0 +1,15 @@
+{
+  "name": "gpu-dashboard",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Monitoramento do servidor, das 2x RTX 3060 e do Ollama. Somente leitura.",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node server/index.js",
+    "build": "npm --prefix web ci && npm --prefix web run build",
+    "test": "npm --prefix web run test"
+  }
+}

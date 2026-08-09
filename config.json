@@ -1,0 +1,33 @@
+{
+  "port": 8099,
+  "host": "0.0.0.0",
+  "ollama": {
+    "host": "127.0.0.1",
+    "port": 11434
+  },
+  "collect": {
+    "intervalMs": 2000,
+    "historyMinutes": 60
+  },
+  "alerts": {
+    "gpuTempC": 80,
+    "gpuVramPercent": 95,
+    "gpuUtilPercent": 95,
+    "gpuUtilSustainedSeconds": 300,
+    "gpuPowerPercent": 95,
+    "ramPercent": 90,
+    "diskFreePercent": 10
+  },
+  "energy": {
+    "pricePerKwh": 0.95,
+    "currency": "R$"
+  },
+  "disk": {
+    "mount": "/"
+  },
+  "log": {
+    "file": "logs/gpu-dashboard.log",
+    "maxBytes": 2097152,
+    "keep": 3
+  }
+}

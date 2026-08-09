@@ -1,0 +1,42 @@
+[Unit]
+Description=GPU Dashboard - monitoramento do servidor, das GPUs e do Ollama
+Documentation=file:/home/margatho/projetos/gpu-dashboard/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=margatho
+Group=margatho
+WorkingDirectory=/home/margatho/projetos/gpu-dashboard
+ExecStart=/usr/bin/node server/index.js
+Environment=NODE_ENV=production
+
+Restart=always
+RestartSec=5
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=gpu-dashboard
+
+# A dashboard so LE o sistema: nao precisa de privilegio algum.
+# nvidia-smi, /proc e a API do Ollama funcionam como usuario comum.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+LockPersonality=true
+
+# ProtectHome fica desligado porque o proprio projeto mora em /home.
+# A escrita e liberada so nestes dois caminhos: o log e o config.json que a
+# aba Configuracoes grava. O codigo-fonte continua somente-leitura.
+ProtectHome=false
+ReadWritePaths=/home/margatho/projetos/gpu-dashboard/logs
+ReadWritePaths=/home/margatho/projetos/gpu-dashboard/config.json
+
+[Install]
+WantedBy=multi-user.target

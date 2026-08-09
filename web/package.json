@@ -1,0 +1,21 @@
+{
+  "name": "gpu-dashboard-web",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "test:build": "vite build --ssr test/smoke.jsx --outDir test-dist --logLevel error && vite build --ssr test/dom.jsx --outDir test-dist --emptyOutDir=false --logLevel error",
+    "test": "npm run test:build && node test-dist/smoke.js && node test-dist/dom.js"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "jsdom": "^29.1.1",
+    "vite": "^5.4.20"
+  }
+}
