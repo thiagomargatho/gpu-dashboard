@@ -1,11 +1,9 @@
 # gpu-dashboard
 
-Monitoramento em tempo real do servidor `192.168.0.50`: sistema, as 2× RTX 3060
-e o Ollama. **Somente leitura** — não carrega, descarrega nem altera modelo
-nenhum, não mexe em power limit e não mata processo.
+Monitoramento em tempo real do servidor: sistema, **todas as GPUs NVIDIA detectadas** e o Ollama. **Somente leitura** — não carrega, descarrega nem altera modelo nenhum, não mexe em power limit e não mata processo.
 
 ```
-http://192.168.0.50:8099
+http://SEU_IP:8099
 ```
 
 ## Arquitetura
@@ -22,7 +20,7 @@ http://192.168.0.50:8099
 server/
   index.js      HTTP, rotas, SSE, arquivos estáticos
   collector.js  laço de 2s, buffer circular, energia, correlação Ollama↔GPU
-  nvidia.js     nvidia-smi (query-gpu, compute-apps) + inventário PCI
+  nvidia.js     nvidia-smi (query-gpu, compute-apps) + inventário PCI (detecta todas as GPUs NVIDIA)
   system.js     /proc, /sys e df — sem lm-sensors
   ollama.js     /api/version, /api/tags, /api/ps + varredura de /proc
   alerts.js     limiares → alertas
@@ -75,7 +73,7 @@ tail -f logs/gpu-dashboard.log
 
 | Método | Rota | Devolve |
 |---|---|---|
-| GET | `/api/health` | `{status, ollama, nvidia, gpu_count, gpu_online, uptime_seconds, alerts}` |
+| GET | `/api/health` | `{status, ollama, nvidia, gpu_count, gpu_online, uptime_seconds, alerts}` — `gpu_count` reflete **todas as GPUs NVIDIA no barramento PCI** |
 | GET | `/api/metrics` | snapshot completo da última coleta |
 | GET | `/api/history?range=5m\|15m\|30m\|60m` | séries por GPU, reamostradas para ≤240 pontos |
 | GET | `/api/stream` | SSE, um evento a cada 2 s |
