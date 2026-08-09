@@ -20,7 +20,7 @@ const GPU_FIELDS = [
   'memory.used', 'memory.free', 'memory.total',
   'temperature.gpu', 'fan.speed',
   'power.draw', 'power.limit', 'power.max_limit',
-  'clocks.gr', 'clocks.mem', 'pstate', 'driver_version',
+  'clocks.gr', 'clocks.mem', 'clocks.max.gr', 'clocks.max.mem', 'pstate', 'driver_version',
 ];
 
 /** "[N/A]", "[Not Supported]", "" -> null. Nunca inventa valor. */
@@ -52,6 +52,9 @@ function shortBus(busId) {
  * quando o nvidia-smi ja desistiu dela.
  */
 let inventoryCache = null;
+// Base clocks cache: bus -> { maxGraphics, maxMem } observed over time
+const baseClocksCache = new Map();
+
 export async function pciInventory() {
   if (inventoryCache) return inventoryCache;
   const out = await new Promise((resolve) => {
@@ -111,6 +114,24 @@ export async function queryGpus() {
     const powerDraw = num(c[11]);
     const powerLimit = num(c[12]);
     const bus = shortBus(c[3]);
+    const clockGr = num(c[14]);
+    const clockMem = num(c[15]);
+    const clockMaxGr = num(c[16]);
+    const clockMaxMem = num(c[17]);
+    const utilGpu = num(c[4]);
+    
+    // Update base clocks cache with maximum observed clocks
+    const base = baseClocksCache.get(bus) || { maxGraphics: 0, maxMem: 0 };
+    if (clockMaxGr && clockMaxGr > base.maxGraphics) base.maxGraphics = clockMaxGr;
+    if (clockMaxMem && clockMaxMem > base.maxMem) base.maxMem = clockMaxMem;
+    baseClocksCache.set(bus, base);
+    
+    // Calculate throttling: only when GPU is under load (util > 30%)
+    // At idle, low clocks are normal power management, not throttling
+    const clockRatioGr = (clockMaxGr && clockGr) ? (clockGr / clockMaxGr) * 100 : null;
+    const clockRatioMem = (clockMaxMem && clockMem) ? (clockMem / clockMaxMem) * 100 : null;
+    const isThrottling = utilGpu != null && utilGpu > 30 && clockRatioGr != null && clockRatioGr < 85;
+    
     healthy.set(bus, {
       status: 'ok',
       index: num(c[0]),
@@ -130,10 +151,17 @@ export async function queryGpus() {
       powerLimitW: powerLimit,
       powerMaxLimitW: num(c[13]),
       powerPercent: powerLimit ? +((powerDraw / powerLimit) * 100).toFixed(1) : null,
-      clockGraphicsMHz: num(c[14]),
-      clockMemMHz: num(c[15]),
-      pstate: str(c[16]),
-      driverVersion: str(c[17]),
+      clockGraphicsMHz: clockGr,
+      clockMemMHz: clockMem,
+      clockMaxGraphicsMHz: clockMaxGr,
+      clockMaxMemMHz: clockMaxMem,
+      baseClockGraphicsMHz: base.maxGraphics,
+      baseClockMemMHz: base.maxMem,
+      clockRatioGraphicsPercent: clockRatioGr ? +clockRatioGr.toFixed(1) : null,
+      clockRatioMemPercent: clockRatioMem ? +clockRatioMem.toFixed(1) : null,
+      isThrottling,
+      pstate: str(c[18]),
+      driverVersion: str(c[19]),
       error: null,
     });
   }
@@ -159,7 +187,8 @@ export async function queryGpus() {
       memUsedMiB: null, memFreeMiB: null, memTotalMiB: null, memPercent: null,
       tempC: null, fanPercent: null,
       powerDrawW: null, powerLimitW: null, powerMaxLimitW: null, powerPercent: null,
-      clockGraphicsMHz: null, clockMemMHz: null, pstate: null, driverVersion: null,
+      clockGraphicsMHz: null, clockMemMHz: null, clockMaxGraphicsMHz: null, clockMaxMemMHz: null,
+      pstate: null, driverVersion: null,
       error: fail?.reason || 'placa nao respondeu ao driver',
     };
   });

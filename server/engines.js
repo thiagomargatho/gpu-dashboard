@@ -1,9 +1,20 @@
-import { readFile, readdir } from 'node:fs/promises';
+import { readFile, readdir, stat } from 'node:fs/promises';
 import { getConfig } from './config.js';
 
 const CLOCK_TICK = 100;
 const PAGE_SIZE = 4096;
 let bootTimeSeconds = null;
+
+// Token counting state persisted across collections
+const tokenState = new Map(); // engine -> { model -> { promptTokens, completionTokens, totalTokens, lastUpdate } }
+
+// Ollama log paths to check
+const OLLAMA_LOG_PATHS = [
+  '/var/log/ollama.log',
+  '/var/log/syslog',
+  '/home/*/.ollama/logs/*.log',
+  '/root/.ollama/logs/*.log',
+];
 
 const ENGINE_COMMANDS = {
   ollama: ['ollama', 'llama-server', 'ollama-runner'],
@@ -77,6 +88,148 @@ async function readBootTime() {
     bootTimeSeconds = null;
   }
   return bootTimeSeconds;
+}
+
+/** Parse Ollama logs for token counts. Ollama logs lines like:
+ *  "eval_tokens=123 prompt_eval_tokens=456"
+ *  or JSON: {"level":"info","msg":"generate","prompt_eval_count":456,"eval_count":123}
+ */
+async function parseOllamaTokens(engineProcs) {
+  const tokensByModel = new Map();
+  
+  // Try to get from /api/ps which may have token info in newer versions
+  // For now, parse logs
+  for (const proc of engineProcs) {
+    try {
+      // Check journalctl for ollama service
+      const { execFile } = await import('node:child_process');
+      const { promisify } = await import('node:util');
+      const execFileAsync = promisify(execFile);
+      
+      // Try journalctl for the specific PID
+      const result = await execFileAsync('journalctl', [
+        '-u', 'ollama',
+        '--since', '5 minutes ago',
+        '-o', 'json',
+        '-q'
+      ], { timeout: 3000, encoding: 'utf8' });
+      
+      for (const line of result.stdout.split('\n')) {
+        if (!line.trim()) continue;
+        try {
+          const entry = JSON.parse(line);
+          const msg = entry.MESSAGE || entry.msg || '';
+          
+          // Parse various log formats
+          // Format 1: "eval_tokens=123 prompt_eval_tokens=456 model=qwen3.5:4b"
+          const modelMatch = msg.match(/model[=:]?\s*([^\s,]+)/i);
+          const evalMatch = msg.match(/eval[_-]?(?:tokens|count)[=:]?\s*(\d+)/i);
+          const promptMatch = msg.match(/prompt[_-]?eval[_-]?(?:tokens|count)[=:]?\s*(\d+)/i);
+          
+          if (modelMatch && (evalMatch || promptMatch)) {
+            const model = modelMatch[1].replace(/['"]/g, '');
+            const completion = evalMatch ? parseInt(evalMatch[1]) : 0;
+            const prompt = promptMatch ? parseInt(promptMatch[1]) : 0;
+            
+            if (!tokensByModel.has(model)) {
+              tokensByModel.set(model, { promptTokens: 0, completionTokens: 0, totalTokens: 0 });
+            }
+            const t = tokensByModel.get(model);
+            t.completionTokens += completion;
+            t.promptTokens += prompt;
+            t.totalTokens += completion + prompt;
+          }
+        } catch {
+          // Not JSON, try plain text parsing
+        }
+      }
+    } catch {
+      // journalctl not available or no permission
+    }
+  }
+  
+  return tokensByModel;
+}
+
+/** Parse vLLM Prometheus metrics for token counts */
+async function parseVLLMTokens(baseUrl) {
+  const tokensByModel = new Map();
+  try {
+    const res = await fetch(`${baseUrl}/metrics`, { signal: AbortSignal.timeout(3000) });
+    const text = await res.text();
+    
+    // vLLM exports: vllm:request_prompt_tokens_total{model="xxx"} 123
+    //              vllm:request_completion_tokens_total{model="xxx"} 456
+    for (const line of text.split('\n')) {
+      if (line.startsWith('#') || !line.includes('tokens_total')) continue;
+      
+      const promptMatch = line.match(/vllm:request_prompt_tokens_total\{model="([^"]+)"\}\s+(\d+)/);
+      const completionMatch = line.match(/vllm:request_completion_tokens_total\{model="([^"]+)"\}\s+(\d+)/);
+      
+      if (promptMatch) {
+        const model = promptMatch[1];
+        if (!tokensByModel.has(model)) tokensByModel.set(model, { promptTokens: 0, completionTokens: 0, totalTokens: 0 });
+        tokensByModel.get(model).promptTokens = parseInt(promptMatch[2]);
+      }
+      if (completionMatch) {
+        const model = completionMatch[1];
+        if (!tokensByModel.has(model)) tokensByModel.set(model, { promptTokens: 0, completionTokens: 0, totalTokens: 0 });
+        tokensByModel.get(model).completionTokens = parseInt(completionMatch[2]);
+      }
+    }
+    
+    for (const [model, t] of tokensByModel) {
+      t.totalTokens = t.promptTokens + t.completionTokens;
+    }
+  } catch {
+    // Ignore
+  }
+  return tokensByModel;
+}
+
+/** Parse TGI Prometheus metrics */
+async function parseTGITokens(baseUrl) {
+  const tokensByModel = new Map();
+  try {
+    const res = await fetch(`${baseUrl}/metrics`, { signal: AbortSignal.timeout(3000) });
+    const text = await res.text();
+    
+    // TGI exports: tgi_request_prompt_tokens_total 123
+    //              tgi_request_completion_tokens_total 456
+    for (const line of text.split('\n')) {
+      if (line.startsWith('#') || !line.includes('tokens_total')) continue;
+      
+      const promptMatch = line.match(/tgi_request_prompt_tokens_total\s+(\d+)/);
+      const completionMatch = line.match(/tgi_request_completion_tokens_total\s+(\d+)/);
+      
+      if (promptMatch || completionMatch) {
+        const model = 'current'; // TGI typically serves one model
+        if (!tokensByModel.has(model)) tokensByModel.set(model, { promptTokens: 0, completionTokens: 0, totalTokens: 0 });
+        if (promptMatch) tokensByModel.get(model).promptTokens = parseInt(promptMatch[1]);
+        if (completionMatch) tokensByModel.get(model).completionTokens = parseInt(completionMatch[1]);
+        tokensByModel.get(model).totalTokens = tokensByModel.get(model).promptTokens + tokensByModel.get(model).completionTokens;
+      }
+    }
+  } catch {
+    // Ignore
+  }
+  return tokensByModel;
+}
+
+/** Get token counts for an engine */
+async function getEngineTokens(engine, procs, baseUrl) {
+  if (engine === 'ollama') return parseOllamaTokens(procs);
+  if (engine === 'vllm') return parseVLLMTokens(baseUrl);
+  if (engine === 'tgi') return parseTGITokens(baseUrl);
+  return new Map();
+}
+
+/** Calculate cost per token */
+function calculateCostPerToken(energyWh, tokens, pricePerKwh) {
+  if (!tokens || tokens === 0 || !energyWh) return null;
+  const costPerKwh = pricePerKwh || 0.95;
+  const costWh = (energyWh / 1000) * costPerKwh; // cost in currency for the energy used
+  return costWh / tokens; // cost per token
 }
 
 const prevProcCpu = new Map();
@@ -264,6 +417,13 @@ async function fetchEngine(engine) {
 
   const procs = await engineProcesses(engine);
 
+  // Get token counts
+  const tokenCounts = await getEngineTokens(engine, procs, base);
+  const tokensByModel = {};
+  for (const [model, counts] of tokenCounts) {
+    tokensByModel[model] = counts;
+  }
+
   return {
     engine,
     enabled: true,
@@ -277,6 +437,7 @@ async function fetchEngine(engine) {
     cpuPercent: procs.length ? +procs.reduce((a, p) => a + (p.cpuPercent ?? 0), 0).toFixed(1) : null,
     rssBytes: procs.length ? procs.reduce((a, p) => a + (p.rssBytes ?? 0), 0) : null,
     uptimeSeconds: procs.length ? Math.max(...procs.map((p) => p.uptimeSeconds ?? 0)) : null,
+    tokens: tokensByModel,
   };
 }
 

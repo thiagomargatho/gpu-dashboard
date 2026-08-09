@@ -4,6 +4,13 @@ import {
   NA, bytes, bytesNum, duration, levelColor, mib, money, num, pct, vramLevel,
 } from '../lib/format.js';
 
+function costPerToken(energyWh, tokens, pricePerKwh, currency) {
+  if (!tokens || tokens === 0 || !energyWh || !pricePerKwh) return null;
+  const costWh = (energyWh / 1000) * pricePerKwh;
+  const perToken = costWh / tokens;
+  return { perToken, per1k: perToken * 1000, currency };
+}
+
 export default function Dashboard({ snapshot, thresholds }) {
   const { system: sys, gpus, engines, energy, vramUsage, modelPlacement, alerts } = snapshot;
 
@@ -73,10 +80,11 @@ export default function Dashboard({ snapshot, thresholds }) {
         {gpus.map((gpu) => <GpuCard key={gpu.index} gpu={gpu} thresholds={thresholds} />)}
       </div>
 
-      <div className="section-title">Motores de Inferência e Energia</div>
-      <div className="grid grid-2">
+      <div className="section-title">Motores de Inferência, Energia e Custo/Token</div>
+      <div className="grid grid-3">
         <EnginesCard engines={engines} placement={modelPlacement} />
         <EnergyCard energy={energy} gpus={gpus} />
+        <CostPerTokenCard engines={engines} energy={energy} />
       </div>
 
       <div className="section-title">VRAM por GPU</div>
@@ -177,6 +185,108 @@ function EnergyCard({ energy, gpus }) {
         {gpus.some((g) => g.status !== 'ok')
           && ' Uma das placas não responde, então o consumo dela não entra em nenhum destes números.'}
       </div>
+    </Card>
+  );
+}
+
+function CostPerTokenCard({ engines, energy }) {
+  const enabled = engines?.filter(e => e.enabled && e.online) ?? [];
+  const totalWh = energy?.accumulatedWh ?? 0;
+  const pricePerKwh = energy?.pricePerKwh ?? 0.95;
+  const currency = energy?.currency ?? 'R$';
+
+  // Aggregate tokens across all engines
+  const tokensByModel = {};
+  let totalTokens = 0;
+  let totalPromptTokens = 0;
+  let totalCompletionTokens = 0;
+
+  for (const engine of enabled) {
+    if (engine.tokens) {
+      for (const [model, counts] of Object.entries(engine.tokens)) {
+        if (!tokensByModel[model]) {
+          tokensByModel[model] = { promptTokens: 0, completionTokens: 0, totalTokens: 0, engine: engine.engine };
+        }
+        tokensByModel[model].promptTokens += counts.promptTokens || 0;
+        tokensByModel[model].completionTokens += counts.completionTokens || 0;
+        tokensByModel[model].totalTokens += counts.totalTokens || 0;
+        totalPromptTokens += counts.promptTokens || 0;
+        totalCompletionTokens += counts.completionTokens || 0;
+        totalTokens += counts.totalTokens || 0;
+      }
+    }
+  }
+
+  const cost = costPerToken(totalWh, totalTokens, pricePerKwh, currency);
+
+  if (!enabled.length) {
+    return (
+      <Card title="Custo por Token" subtitle="nenhum motor online">
+        <Empty>Habilite motores no config.json</Empty>
+      </Card>
+    );
+  }
+
+  if (totalTokens === 0) {
+    return (
+      <Card title="Custo por Token" subtitle={`${enabled.map(e => e.engine.toUpperCase()).join(', ')} online`}>
+        <div className="note">
+          Nenhum token contabilizado ainda. Aguarde inferências ou verifique logs do motor.
+          <br /><small>Ollama: journalctl -u ollama | vLLM/TGI: /metrics endpoint</small>
+        </div>
+      </Card>
+    );
+  }
+
+  return (
+    <Card title="Custo por Token (acumulado)" subtitle={`${enabled.map(e => e.engine.toUpperCase()).join(', ')} · ${money(energy.accumulatedCost, currency)} total`}>
+      <div className="stat-row" style={{ marginBottom: 12 }}>
+        <Metric label="Tokens total" value={num(totalTokens)} size="sm" />
+        <Metric label="Prompt" value={num(totalPromptTokens)} size="sm" />
+        <Metric label="Completion" value={num(totalCompletionTokens)} size="sm" />
+        <Metric label="Energia" value={num(totalWh, 1, ' Wh')} size="sm" />
+      </div>
+
+      <div className="stat-row" style={{ marginBottom: 12 }}>
+        <Metric label="Custo/token" value={cost ? `${cost.perToken.toFixed(6)} ${currency}` : NA} size="sm" />
+        <Metric label="Custo/1k tokens" value={cost ? `${cost.per1k.toFixed(4)} ${currency}` : NA} size="sm" />
+        <Metric label="Tokens/Wh" value={totalWh > 0 ? num(totalTokens / totalWh, 1) : NA} size="sm" />
+        <Metric label="Wh/1k tokens" value={totalTokens > 0 ? num((totalWh / totalTokens) * 1000, 2) : NA} size="sm" />
+      </div>
+
+      {Object.keys(tokensByModel).length > 0 && (
+        <div className="table-wrap" style={{ maxHeight: 200, overflow: 'auto' }}>
+          <table>
+            <thead>
+              <tr>
+                <th>Modelo</th>
+                <th className="num">Motor</th>
+                <th className="num">Prompt</th>
+                <th className="num">Completion</th>
+                <th className="num">Total</th>
+                <th className="num">Custo/1k</th>
+              </tr>
+            </thead>
+            <tbody>
+              {Object.entries(tokensByModel)
+                .sort((a, b) => b[1].totalTokens - a[1].totalTokens)
+                .map(([model, counts]) => {
+                  const modelCost = costPerToken(totalWh, counts.totalTokens, pricePerKwh, currency);
+                  return (
+                    <tr key={model}>
+                      <td className="mono" style={{ whiteSpace: 'nowrap', maxWidth: 200, textOverflow: 'ellipsis', overflow: 'hidden' }}>{model}</td>
+                      <td className="num">{counts.engine.toUpperCase()}</td>
+                      <td className="num">{num(counts.promptTokens)}</td>
+                      <td className="num">{num(counts.completionTokens)}</td>
+                      <td className="num"><strong>{num(counts.totalTokens)}</strong></td>
+                      <td className="num">{modelCost ? `${modelCost.per1k.toFixed(4)} ${currency}` : NA}</td>
+                    </tr>
+                  );
+                })}
+            </tbody>
+          </table>
+        </div>
+      )}
     </Card>
   );
 }

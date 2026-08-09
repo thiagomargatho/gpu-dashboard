@@ -2,6 +2,8 @@ import { getConfig } from './config.js';
 
 // Quanto tempo cada GPU esta continuamente acima do limite de utilizacao.
 const sustainedSince = new Map();
+// Throttling tracking
+const throttlingSince = new Map();
 
 function pct(v) {
   return v == null ? '—' : `${v.toFixed(0)}%`;
@@ -23,6 +25,7 @@ export function evaluate(snapshot) {
         message: `${label} não responde ao driver (${gpu.error}). Recuperação exige reiniciar o servidor.`,
       });
       sustainedSince.delete(gpu.index);
+      throttlingSince.delete(gpu.index);
       continue;
     }
 
@@ -51,6 +54,22 @@ export function evaluate(snapshot) {
         scope: label,
         message: `${label} puxando ${gpu.powerDrawW}W de ${gpu.powerLimitW}W (${pct(gpu.powerPercent)} do teto)`,
       });
+    }
+
+    // Throttling detection: clock below 85% of max for sustained period
+    if (gpu.isThrottling) {
+      if (!throttlingSince.has(gpu.index)) throttlingSince.set(gpu.index, now);
+      const elapsed = (now - throttlingSince.get(gpu.index)) / 1000;
+      if (elapsed >= 60) { // Alert after 1 minute of sustained throttling
+        out.push({
+          id: `gpu${gpu.index}-throttling`,
+          level: 'warning',
+          scope: label,
+          message: `${label} com thermal throttling: clock gráfico em ${gpu.clockRatioGraphicsPercent}% do máximo (${gpu.clockGraphicsMHz}/${gpu.baseClockGraphicsMHz} MHz) há ${Math.round(elapsed / 60)} min`,
+        });
+      }
+    } else {
+      throttlingSince.delete(gpu.index);
     }
 
     // "Carga alta por periodo prolongado" so vale se for continua — um pico de

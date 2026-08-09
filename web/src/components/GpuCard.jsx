@@ -15,12 +15,19 @@ export default function GpuCard({ gpu, thresholds }) {
   const util = utilLevel(gpu.utilGpu);
   const vram = vramLevel(gpu.memPercent, thresholds?.gpuVramPercent ?? 95);
   const temp = tempLevel(gpu.tempC, thresholds?.gpuTempC ?? 80);
+  const isThrottling = gpu.isThrottling === true;
+  const clockRatio = gpu.clockRatioGraphicsPercent;
 
   return (
     <Card
       title={`${gpu.name ?? 'GPU'} — GPU ${gpu.index}`}
       subtitle={`${gpu.busId ?? NA} · ${gpu.pstate ?? NA}`}
-      right={<Chip level={util === 'idle' ? 'info' : util}>{UTIL_TEXT[util]}</Chip>}
+      right={
+        <>
+          {isThrottling && <Chip level="warn" style={{ marginRight: 8 }}>⚡ Throttling</Chip>}
+          <Chip level={util === 'idle' ? 'info' : util}>{UTIL_TEXT[util]}</Chip>
+        </>
+      }
     >
       <div className="stat-row">
         <Metric label="GPU" value={pct(gpu.utilGpu)} color={levelColor(util)} />
@@ -43,6 +50,7 @@ export default function GpuCard({ gpu, thresholds }) {
       <div className="metric-hint">
         VRAM {pct(gpu.memPercent, 1)} · {VRAM_TEXT[vram]} · clock {num(gpu.clockGraphicsMHz, 0, ' MHz')} /
         {' '}mem {num(gpu.clockMemMHz, 0, ' MHz')}
+        {isThrottling && <span style={{ color: 'var(--amber)', marginLeft: 8 }}>⚡ Clock: {clockRatio}% do máx ({gpu.clockGraphicsMHz}/{gpu.baseClockGraphicsMHz} MHz)</span>}
       </div>
 
       <Spark points={trail} color={levelColor(util)} domainMax={100} />
