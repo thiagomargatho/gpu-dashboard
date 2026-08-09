@@ -1,11 +1,11 @@
 import { Alerts, Bar, Card, Chip, Empty, Legend, Metric, StackBar } from '../components/ui.jsx';
 import GpuCard from '../components/GpuCard.jsx';
 import {
-  NA, bytes, bytesNum, duration, expiry, levelColor, mib, money, num, pct, vramLevel,
+  NA, bytes, bytesNum, duration, levelColor, mib, money, num, pct, vramLevel,
 } from '../lib/format.js';
 
 export default function Dashboard({ snapshot, thresholds }) {
-  const { system: sys, gpus, ollama, energy, vramUsage, modelPlacement, alerts } = snapshot;
+  const { system: sys, gpus, engines, energy, vramUsage, modelPlacement, alerts } = snapshot;
 
   return (
     <>
@@ -73,9 +73,9 @@ export default function Dashboard({ snapshot, thresholds }) {
         {gpus.map((gpu) => <GpuCard key={gpu.index} gpu={gpu} thresholds={thresholds} />)}
       </div>
 
-      <div className="section-title">Ollama e energia</div>
+      <div className="section-title">Motores de Inferência e Energia</div>
       <div className="grid grid-2">
-        <OllamaCard ollama={ollama} placement={modelPlacement} />
+        <EnginesCard engines={engines} placement={modelPlacement} />
         <EnergyCard energy={energy} gpus={gpus} />
       </div>
 
@@ -89,65 +89,55 @@ export default function Dashboard({ snapshot, thresholds }) {
   );
 }
 
-function OllamaCard({ ollama, placement }) {
-  const loadedInVram = ollama.loaded.filter((m) => m.vramBytes > 0);
-  const onCpu = ollama.loaded.filter((m) => !m.vramBytes);
+function EnginesCard({ engines, placement }) {
+  const enabled = engines?.filter(e => e.enabled) ?? [];
+  const online = enabled.filter(e => e.online);
+  const totalLoaded = enabled.reduce((a, e) => a + (e.loaded?.length ?? 0), 0);
+  const totalModels = enabled.reduce((a, e) => a + (e.models?.length ?? 0), 0);
 
   return (
-    <Card
-      title="Ollama"
-      subtitle={`${ollama.url}${ollama.version ? ` · v${ollama.version}` : ''}`}
-      right={<Chip level={ollama.online ? 'ok' : 'bad'}>{ollama.online ? 'Online' : 'Offline'}</Chip>}
-    >
-      <div className="stat-row" style={{ marginBottom: 4 }}>
-        <Metric label="Instalados" value={num(ollama.models.length)} size="sm" />
-        <Metric label="Carregados" value={num(ollama.loaded.length)} size="sm" />
-        <Metric label="Na VRAM" value={num(loadedInVram.length)} size="sm" />
-        <Metric label="CPU" value={pct(ollama.cpuPercent, 1)} size="sm" />
-        <Metric label="RSS" value={bytes(ollama.rssBytes)} size="sm" />
-      </div>
-
-      {ollama.loaded.length === 0 ? (
-        <Empty>Nenhum modelo carregado na memória.</Empty>
+    <Card title="Motores de Inferência" subtitle={`${online.length}/${enabled.length} online`}>
+      {enabled.length === 0 ? (
+        <Empty>Nenhum motor habilitado no config.json</Empty>
       ) : (
-        <div className="table-wrap" style={{ marginTop: 12 }}>
+        <div className="table-wrap" style={{ marginTop: 8 }}>
           <table>
             <thead>
               <tr>
-                <th>Modelo carregado</th>
-                <th>Onde</th>
-                <th className="num">VRAM</th>
-                <th className="num">Contexto</th>
-                <th className="num">Expira</th>
+                <th>Motor</th>
+                <th className="num">Status</th>
+                <th className="num">Versão</th>
+                <th className="num">Modelos</th>
+                <th className="num">Carregados</th>
+                <th className="num">Processos</th>
+                <th className="num">CPU%</th>
+                <th className="num">RAM</th>
               </tr>
             </thead>
             <tbody>
-              {ollama.loaded.map((m) => {
-                const place = placement.find((p) => p.model === m.name);
-                return (
-                  <tr key={m.name}>
-                    <td>{m.name}</td>
-                    <td>
-                      {m.vramBytes > 0
-                        ? <Chip level="info">{place?.gpuIndex != null ? `GPU ${place.gpuIndex}` : 'GPU'}</Chip>
-                        : <Chip>CPU</Chip>}
-                    </td>
-                    <td className="num">{m.vramBytes ? bytes(m.vramBytes) : NA}</td>
-                    <td className="num">{num(m.contextLength)}</td>
-                    <td className="num">{expiry(m.expiresAt)}</td>
-                  </tr>
-                );
-              })}
+              {enabled.map((e) => (
+                <tr key={e.engine}>
+                  <td>{e.engine.toUpperCase()}</td>
+                  <td>
+                    <Chip level={e.online ? 'ok' : 'bad'}>{e.online ? 'Online' : 'Offline'}</Chip>
+                  </td>
+                  <td className="num">{e.version ?? NA}</td>
+                  <td className="num">{e.models?.length ?? 0}</td>
+                  <td className="num">{e.loaded?.length ?? 0}</td>
+                  <td className="num">{e.processes?.length ?? 0}</td>
+                  <td className="num">{e.cpuPercent != null ? pct(e.cpuPercent) : NA}</td>
+                  <td className="num">{e.rssBytes != null ? bytes(e.rssBytes) : NA}</td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
       )}
 
-      {onCpu.length > 0 && (
+      {enabled.length > 0 && (
         <div className="note" style={{ marginTop: 12 }}>
-          {onCpu.length === 1 ? 'O modelo' : 'Os modelos'} <strong>{onCpu.map((m) => m.name).join(', ')}</strong>
-          {' '}{onCpu.length === 1 ? 'está' : 'estão'} residente{onCpu.length === 1 ? '' : 's'} em RAM,
-          rodando 100% em CPU (<span className="mono">size_vram = 0</span>).
+          Total: <strong>{totalModels}</strong> modelos instalados, <strong>{totalLoaded}</strong> carregados.
+          {enabled.some(e => e.error) && ' Alguns motores têm erros — veja a aba Motores.'}
         </div>
       )}
     </Card>
@@ -215,7 +205,7 @@ function VramCard({ usage, placement }) {
       <StackBar
         total={usage.totalBytes}
         segments={[
-          { label: 'Ollama', value: usage.ollamaBytes ?? 0, color: 'var(--blue)', text: bytes(usage.ollamaBytes) },
+          { label: 'Engines', value: usage.engineBytes ?? 0, color: 'var(--blue)', text: bytes(usage.engineBytes) },
           { label: 'Outros processos', value: usage.otherBytes ?? 0, color: 'var(--amber)', text: bytes(usage.otherBytes) },
           { label: 'Overhead do driver', value: usage.overheadBytes ?? 0, color: 'var(--text-faint)', text: bytes(usage.overheadBytes) },
           { label: 'Livre', value: free ?? 0, color: 'var(--track)', text: bytes(free) },
@@ -223,7 +213,7 @@ function VramCard({ usage, placement }) {
       />
       <Legend
         items={[
-          { label: 'Ollama', color: 'var(--blue)', text: bytes(usage.ollamaBytes) },
+          { label: 'Engines', color: 'var(--blue)', text: bytes(usage.engineBytes) },
           { label: 'Outros', color: 'var(--amber)', text: bytes(usage.otherBytes) },
           { label: 'Overhead', color: 'var(--text-faint)', text: bytes(usage.overheadBytes) },
           { label: 'Livre', color: 'var(--track)', text: bytes(free) },
@@ -234,13 +224,13 @@ function VramCard({ usage, placement }) {
         {here.length > 0 ? (
           <>
             Distribuição estimada: <strong>{here.map((p) => p.model).join(', ')}</strong>.
-            {' '}A associação modelo→placa é inferida cruzando <span className="mono">/api/ps</span> com
-            a memória por processo do <span className="mono">nvidia-smi</span> — o Ollama não informa a GPU.
+            {' '}A associação modelo→placa é inferida cruzando a API do motor com
+            a memória por processo do <span className="mono">nvidia-smi</span> — os motores não informam a GPU.
           </>
         ) : undetermined ? (
           'Não foi possível determinar a distribuição por modelo nesta placa.'
         ) : (
-          'Nenhum modelo do Ollama alocado nesta placa.'
+          'Nenhum modelo de engine alocado nesta placa.'
         )}
         {usage.overheadBytes > 0 && (
           <> O overhead de {bytes(usage.overheadBytes)} é contexto CUDA do driver, não um processo.</>

@@ -74,6 +74,15 @@ export default function Settings() {
 
   const ro = config.readOnly;
 
+  const engineRows = [];
+  if (ro.ollama?.enabled) engineRows.push(['Ollama', `${ro.ollama.host}:${ro.ollama.port}`]);
+  if (ro.vllm?.enabled) engineRows.push(['vLLM', `${ro.vllm.host}:${ro.vllm.port}`]);
+  if (ro.tgi?.enabled) engineRows.push(['TGI', `${ro.tgi.host}:${ro.tgi.port}`]);
+  if (ro.llamaCpp?.enabled) engineRows.push(['llama.cpp', `${ro.llamaCpp.host}:${ro.llamaCpp.port}`]);
+  if (ro.localai?.enabled) engineRows.push(['LocalAI', `${ro.localai.host}:${ro.localai.port}`]);
+  if (ro.koboldcpp?.enabled) engineRows.push(['KoboldCPP', `${ro.koboldcpp.host}:${ro.koboldcpp.port}`]);
+  if (engineRows.length === 0) engineRows.push(['Nenhum motor habilitado', '—']);
+
   return (
     <>
       <div className="section-title">Configurações</div>
@@ -118,8 +127,7 @@ export default function Settings() {
               rows={[
                 ['Porta da aplicação', String(ro.port)],
                 ['Host de escuta', ro.host],
-                ['Host do Ollama', ro.ollama.host],
-                ['Porta do Ollama', String(ro.ollama.port)],
+                ...engineRows,
                 ['Intervalo de coleta', `${ro.collect.intervalMs} ms`],
                 ['Janela de histórico', `${ro.collect.historyMinutes} min`],
                 ['Ponto de montagem monitorado', ro.disk.mount],

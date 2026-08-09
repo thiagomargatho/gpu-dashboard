@@ -9,7 +9,7 @@
 import { renderToString } from 'react-dom/server';
 import Dashboard from '../src/pages/Dashboard.jsx';
 import Gpus from '../src/pages/Gpus.jsx';
-import OllamaPage from '../src/pages/OllamaPage.jsx';
+import EnginesPage from '../src/pages/EnginesPage.jsx';
 import System from '../src/pages/System.jsx';
 
 const BASE = process.env.BASE ?? 'http://127.0.0.1:8099';
@@ -33,7 +33,7 @@ async function main() {
   const PAGES = [
     ['Dashboard', <Dashboard snapshot={snapshot} thresholds={thresholds} />],
     ['GPUs', <Gpus snapshot={snapshot} thresholds={thresholds} />],
-    ['Ollama', <OllamaPage snapshot={snapshot} />],
+    ['Motores', <EnginesPage snapshot={snapshot} />],
     ['Sistema', <System snapshot={snapshot} thresholds={thresholds} />],
   ];
 

@@ -3,7 +3,7 @@ import { useStream } from './lib/useStream.js';
 import { Dot } from './components/ui.jsx';
 import Dashboard from './pages/Dashboard.jsx';
 import Gpus from './pages/Gpus.jsx';
-import OllamaPage from './pages/OllamaPage.jsx';
+import EnginesPage from './pages/EnginesPage.jsx';
 import System from './pages/System.jsx';
 import Settings from './pages/Settings.jsx';
 import { clockTime } from './lib/format.js';
@@ -11,7 +11,7 @@ import { clockTime } from './lib/format.js';
 const PAGES = [
   ['dashboard', 'Dashboard'],
   ['gpus', 'GPUs'],
-  ['ollama', 'Ollama'],
+  ['engines', 'Motores'],
   ['sistema', 'Sistema'],
   ['config', 'Configurações'],
 ];
@@ -107,7 +107,7 @@ export default function App() {
           <>
             {route === 'dashboard' && <Dashboard snapshot={snapshot} thresholds={thresholds} />}
             {route === 'gpus' && <Gpus snapshot={snapshot} thresholds={thresholds} />}
-            {route === 'ollama' && <OllamaPage snapshot={snapshot} />}
+            {route === 'engines' && <EnginesPage snapshot={snapshot} />}
             {route === 'sistema' && <System snapshot={snapshot} thresholds={thresholds} />}
           </>
         )}

@@ -71,13 +71,16 @@ export function evaluate(snapshot) {
     }
   }
 
-  if (!snapshot.ollama.online) {
-    out.push({
-      id: 'ollama-offline',
-      level: 'critical',
-      scope: 'Ollama',
-      message: `Ollama offline em ${snapshot.ollama.url}${snapshot.ollama.error ? ` — ${snapshot.ollama.error}` : ''}`,
-    });
+  // Alertas de engines offline
+  for (const engine of snapshot.engines || []) {
+    if (engine.enabled && !engine.online) {
+      out.push({
+        id: `${engine.engine}-offline`,
+        level: 'critical',
+        scope: engine.engine,
+        message: `${engine.engine} offline em ${engine.url}${engine.error ? ` — ${engine.error}` : ''}`,
+      });
+    }
   }
 
   const mem = snapshot.system.memory;

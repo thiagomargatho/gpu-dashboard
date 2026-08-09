@@ -2,7 +2,7 @@ import { getConfig } from './config.js';
 import { log, logTransition } from './logger.js';
 import { queryGpus, queryProcesses, queryVersions } from './nvidia.js';
 import { sampleSystem } from './system.js';
-import { sampleOllama } from './ollama.js';
+import { sampleEngines, getEngineCommands } from './engines.js';
 import { evaluate } from './alerts.js';
 
 const MiB = 1024 * 1024;
@@ -52,21 +52,23 @@ function ringFor(index) {
   return state.history.get(index);
 }
 
-/** Um processo e "do Ollama" se o binario for o servidor ou o runner. */
-function isOllamaProcess(proc) {
-  const name = `${proc.processName || ''} ${proc.command || ''}`;
-  return /ollama|llama-server|llama_server/i.test(name);
+/** Um processo é de algum motor de inferência conhecido. */
+function isEngineProcess(proc) {
+  const name = `${proc.processName || ''} ${proc.command || ''}`.toLowerCase();
+  const allCommands = Object.values(getEngineCommands()).flat();
+  return allCommands.some((c) => name.includes(c.toLowerCase()));
 }
 
 /**
- * Cruza os processos do nvidia-smi com o /api/ps do Ollama.
+ * Cruza os processos do nvidia-smi com os processos dos motores de inferência.
  *
- * O /api/ps NAO informa em qual GPU o modelo esta — entao a associacao
- * modelo -> placa e inferida por proximidade entre `size_vram` e a memoria que
- * o processo ocupa na placa. Quando nao da para casar 1:1, o campo sai como
- * null e a UI diz que nao foi possivel determinar, em vez de chutar.
+ * O /api/ps (Ollama) e /slots (llama.cpp) informam modelos carregados,
+ * mas não em qual GPU. A associação modelo -> placa é inferida por proximidade
+ * entre o tamanho do modelo (vramBytes) e a memória que o processo ocupa na placa.
+ * Quando não dá para casar 1:1, o campo sai como null e a UI diz que não foi
+ * possível determinar, em vez de chutar.
  */
-function correlate(gpus, procs, ollama) {
+function correlate(gpus, procs, engines) {
   const byUuid = new Map();
   for (const gpu of gpus) {
     if (gpu.status !== 'ok') continue;
@@ -75,7 +77,7 @@ function correlate(gpus, procs, ollama) {
 
   const perGpu = new Map();
   for (const gpu of gpus) {
-    perGpu.set(gpu.index, { ollamaBytes: 0, otherBytes: 0, procs: [] });
+    perGpu.set(gpu.index, { engineBytes: 0, otherBytes: 0, procs: [] });
   }
 
   for (const proc of procs) {
@@ -83,31 +85,25 @@ function correlate(gpus, procs, ollama) {
     if (!gpu) continue;
     const bucket = perGpu.get(gpu.index);
     const bytes = (proc.memMiB ?? 0) * MiB;
-    if (isOllamaProcess(proc)) bucket.ollamaBytes += bytes;
+    if (isEngineProcess(proc)) bucket.engineBytes += bytes;
     else bucket.otherBytes += bytes;
-    bucket.procs.push({ ...proc, gpuIndex: gpu.index, isOllama: isOllamaProcess(proc) });
+    bucket.procs.push({ ...proc, gpuIndex: gpu.index, isEngine: isEngineProcess(proc) });
   }
 
-  // Modelo -> GPU. O /api/ps nao diz a placa, entao inferimos pelo tamanho.
-  //
-  // A janela e assimetrica de proposito: o `size_vram` do Ollama conta os pesos
-  // do modelo, enquanto o processo aloca tambem o contexto CUDA e os buffers de
-  // calculo. A alocacao real e sempre MAIOR que o size_vram — medido aqui:
-  // gestao360 declara 5.73 GB e o llama-server ocupa 6.94 GB (+21%).
-  // Aceitamos de 0.95x a 1.6x, e so quando o candidato e unico.
+  // Modelo -> GPU. A associação é inferida pelo tamanho.
   const onGpu = procs
-    .filter((p) => isOllamaProcess(p) && byUuid.has(p.gpuUuid))
+    .filter((p) => isEngineProcess(p) && byUuid.has(p.gpuUuid))
     .map((p) => ({ p, gpu: byUuid.get(p.gpuUuid) }));
-  const inVram = ollama.loaded.filter((m) => m.vramBytes > 0);
+
+  const allLoaded = engines.flatMap((e) => e.loaded || []);
+  const inVram = allLoaded.filter((m) => m.vramBytes > 0);
   const claimed = new Set();
 
-  const placement = ollama.loaded.map((model) => {
-    if (!model.vramBytes) return { model: model.name, gpuIndex: null, confidence: 'cpu' };
+  const placement = allLoaded.map((model) => {
+    if (!model.vramBytes) return { model: model.name, engine: model.engine || 'unknown', gpuIndex: null, confidence: 'cpu' };
 
-    // Um unico modelo na VRAM e um unico processo de GPU: nao ha ambiguidade
-    // possivel, independente do tamanho.
     if (inVram.length === 1 && onGpu.length === 1) {
-      return { model: model.name, gpuIndex: onGpu[0].gpu.index, confidence: 'estimado' };
+      return { model: model.name, engine: model.engine || 'unknown', gpuIndex: onGpu[0].gpu.index, confidence: 'estimado' };
     }
 
     const candidates = onGpu
@@ -116,24 +112,22 @@ function correlate(gpus, procs, ollama) {
         const bytes = (c.p.memMiB ?? 0) * MiB;
         return bytes >= model.vramBytes * 0.95 && bytes <= model.vramBytes * 1.6;
       });
-    if (candidates.length !== 1) return { model: model.name, gpuIndex: null, confidence: 'indeterminado' };
+    if (candidates.length !== 1) return { model: model.name, engine: model.engine || 'unknown', gpuIndex: null, confidence: 'indeterminado' };
     claimed.add(candidates[0].p.pid);
-    return { model: model.name, gpuIndex: candidates[0].gpu.index, confidence: 'estimado' };
+    return { model: model.name, engine: model.engine || 'unknown', gpuIndex: candidates[0].gpu.index, confidence: 'estimado' };
   });
 
   const usage = gpus.map((gpu) => {
-    const bucket = perGpu.get(gpu.index) ?? { ollamaBytes: 0, otherBytes: 0 };
+    const bucket = perGpu.get(gpu.index) ?? { engineBytes: 0, otherBytes: 0 };
     const totalUsed = gpu.memUsedMiB != null ? gpu.memUsedMiB * MiB : null;
-    const accounted = bucket.ollamaBytes + bucket.otherBytes;
+    const accounted = bucket.engineBytes + bucket.otherBytes;
     return {
       index: gpu.index,
       status: gpu.status,
       totalBytes: gpu.memTotalMiB != null ? gpu.memTotalMiB * MiB : null,
       usedBytes: totalUsed,
-      ollamaBytes: gpu.status === 'ok' ? bucket.ollamaBytes : null,
+      engineBytes: gpu.status === 'ok' ? bucket.engineBytes : null,
       otherBytes: gpu.status === 'ok' ? bucket.otherBytes : null,
-      // A diferenca entre memory.used e a soma dos processos e overhead de
-      // driver/contexto CUDA. Sai separado para nao ser confundido com processo.
       overheadBytes: gpu.status === 'ok' && totalUsed != null
         ? Math.max(0, totalUsed - accounted) : null,
     };
@@ -188,8 +182,8 @@ function energyReport(gpus) {
 async function collect() {
   const t = Date.now();
   try {
-    const [{ gpus, smiError }, procs, system, ollama, versions] = await Promise.all([
-      queryGpus(), queryProcesses(), sampleSystem(), sampleOllama(), queryVersions(),
+    const [{ gpus, smiError }, procs, system, engines, versions] = await Promise.all([
+      queryGpus(), queryProcesses(), sampleSystem(), sampleEngines(), queryVersions(),
     ]);
 
     if (smiError) {
@@ -198,9 +192,13 @@ async function collect() {
       logTransition('smi', 'ok', 'info', 'nvidia-smi voltou a responder');
     }
 
-    logTransition('ollama', ollama.online ? 'up' : 'down',
-      ollama.online ? 'info' : 'warn',
-      ollama.online ? `Ollama online (v${ollama.version})` : `Ollama offline em ${ollama.url}`);
+    for (const engine of engines) {
+      if (engine.enabled) {
+        logTransition(engine.engine, engine.online ? 'up' : 'down',
+          engine.online ? 'info' : 'warn',
+          engine.online ? `${engine.engine} online (v${engine.version})` : `${engine.engine} offline em ${engine.url}`);
+      }
+    }
 
     for (const gpu of gpus) {
       logTransition(`gpu${gpu.index}-state`, gpu.status,
@@ -227,7 +225,7 @@ async function collect() {
     }
 
     accumulateEnergy(gpus);
-    const { usage, placement, gpuProcesses } = correlate(gpus, procs, ollama);
+    const { usage, placement, gpuProcesses } = correlate(gpus, procs, engines);
 
     const snapshot = {
       t,
@@ -239,9 +237,7 @@ async function collect() {
       modelPlacement: placement,
       energy: energyReport(gpus),
       system,
-      ollama,
-      // A UI pinta os estados com os MESMOS limiares que geram os alertas —
-      // sem isso, mudar o limite nas Configuracoes so mudaria metade da tela.
+      engines,
       alertThresholds: getConfig().alerts,
       alerts: [],
     };

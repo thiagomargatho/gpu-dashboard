@@ -70,7 +70,7 @@ export default function Gpus({ snapshot, thresholds }) {
                     <td className="num mono">{p.pid}</td>
                     <td>
                       {p.command ?? NA}{' '}
-                      {p.isOllama && <Chip level="info">ollama</Chip>}
+                      {!p.isEngine && <Chip level="info">engine</Chip>}
                     </td>
                     <td>GPU {p.gpuIndex}</td>
                     <td className="num">{p.memMiB == null ? NA : `${mib(p.memMiB)} GB`}</td>

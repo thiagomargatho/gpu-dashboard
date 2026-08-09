@@ -94,9 +94,12 @@ const server = createServer(async (req, res) => {
   if (path === '/api/health') {
     const snap = collector.currentSnapshot();
     const gpus = snap?.gpus ?? [];
+    const engines = snap?.engines ?? [];
+    const enabledEngines = engines.filter(e => e.enabled);
+    const onlineEngines = enabledEngines.filter(e => e.online);
     sendJson(res, 200, {
       status: snap ? 'ok' : 'starting',
-      ollama: snap?.ollama.online ?? false,
+      engines: enabledEngines.map(e => ({ name: e.engine, online: e.online, version: e.version })),
       nvidia: gpus.some((g) => g.status === 'ok'),
       gpu_count: gpus.length,
       gpu_online: gpus.filter((g) => g.status === 'ok').length,
@@ -131,8 +134,7 @@ const server = createServer(async (req, res) => {
     if (req.method === 'GET') {
       const c = getConfig();
       sendJson(res, 200, {
-        // porta/host/caminhos sao informativos: mudar exige editar o arquivo e reiniciar
-        readOnly: { port: c.port, host: c.host, ollama: c.ollama, collect: c.collect, disk: c.disk, log: c.log },
+        readOnly: { port: c.port, host: c.host, ollama: c.ollama, vllm: c.vllm, tgi: c.tgi, llamaCpp: c.llamaCpp, localai: c.localai, koboldcpp: c.koboldcpp, collect: c.collect, disk: c.disk, log: c.log },
         editable: { energy: c.energy, alerts: c.alerts },
         limits: editableKeys(),
       });

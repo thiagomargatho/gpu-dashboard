@@ -3,7 +3,33 @@
   "host": "0.0.0.0",
   "ollama": {
     "host": "127.0.0.1",
-    "port": 11434
+    "port": 11434,
+    "enabled": true
+  },
+  "vllm": {
+    "host": "127.0.0.1",
+    "port": 8000,
+    "enabled": false
+  },
+  "tgi": {
+    "host": "127.0.0.1",
+    "port": 8080,
+    "enabled": false
+  },
+  "llamaCpp": {
+    "host": "127.0.0.1",
+    "port": 8080,
+    "enabled": false
+  },
+  "localai": {
+    "host": "127.0.0.1",
+    "port": 8080,
+    "enabled": false
+  },
+  "koboldcpp": {
+    "host": "127.0.0.1",
+    "port": 5001,
+    "enabled": false
   },
   "collect": {
     "intervalMs": 2000,
