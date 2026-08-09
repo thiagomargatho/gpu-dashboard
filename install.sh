@@ -156,7 +156,10 @@ PrivateTmp=true
 ProtectSystem=strict
 ProtectKernelTunables=true
 ProtectKernelModules=true
+ProtectKernelLogs=true
 ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
 RestrictSUIDSGID=true
 RestrictNamespaces=true
 LockPersonality=true
@@ -164,8 +167,7 @@ LockPersonality=true
 # ProtectHome desligado porque o projeto mora em /home. A escrita e liberada
 # so no log e no config.json — o codigo-fonte fica somente-leitura.
 ProtectHome=false
-ReadWritePaths=$DIR/logs
-ReadWritePaths=$DIR/config.json
+ReadWritePaths=$DIR/logs $DIR/config.json
 
 [Install]
 WantedBy=multi-user.target

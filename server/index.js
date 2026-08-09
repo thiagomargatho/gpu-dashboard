@@ -1,6 +1,6 @@
 import { createServer } from 'node:http';
 import { createReadStream, existsSync, statSync } from 'node:fs';
-import { extname, join, normalize } from 'node:path';
+import { extname, join, normalize, sep } from 'node:path';
 import { ROOT, editableKeys, getConfig, loadConfig, updateConfig } from './config.js';
 import { log } from './logger.js';
 import * as collector from './collector.js';
@@ -21,11 +21,17 @@ const MIME = {
 
 const RANGES = { '5m': 5, '15m': 15, '30m': 30, '60m': 60, '1h': 60 };
 
+const SECURITY_HEADERS = {
+  'x-content-type-options': 'nosniff',
+  'x-frame-options': 'DENY',
+};
+
 function sendJson(res, status, body) {
   const payload = JSON.stringify(body);
   res.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',
     'cache-control': 'no-store',
+    ...SECURITY_HEADERS,
     'content-length': Buffer.byteLength(payload),
   });
   res.end(payload);
@@ -51,7 +57,7 @@ function readBody(req, limitBytes = 8 * 1024) {
 
 function serveStatic(req, res, pathname) {
   if (!existsSync(WEB_DIR)) {
-    res.writeHead(503, { 'content-type': 'text/plain; charset=utf-8' });
+    res.writeHead(503, { 'content-type': 'text/plain; charset=utf-8', ...SECURITY_HEADERS });
     res.end('Frontend ainda nao foi compilado. Rode: npm run build\n');
     return;
   }
@@ -59,8 +65,8 @@ function serveStatic(req, res, pathname) {
   // normalize + prefixo obrigatorio: bloqueia ../../etc/passwd.
   const rel = normalize(pathname === '/' ? '/index.html' : pathname).replace(/^(\.\.[/\\])+/, '');
   let file = join(WEB_DIR, rel);
-  if (!file.startsWith(WEB_DIR)) {
-    res.writeHead(403).end();
+  if (file !== WEB_DIR && !file.startsWith(WEB_DIR + sep)) {
+    res.writeHead(403, { 'content-type': 'text/plain', ...SECURITY_HEADERS }).end('Forbidden\n');
     return;
   }
 
@@ -71,22 +77,23 @@ function serveStatic(req, res, pathname) {
   res.writeHead(200, {
     'content-type': MIME[ext] || 'application/octet-stream',
     'cache-control': ext === '.html' ? 'no-cache' : 'public, max-age=86400',
+    ...SECURITY_HEADERS,
   });
   createReadStream(file).pipe(res);
 }
 
-const server = createServer(async (req, res) => {
+async function route(req, res) {
   let url;
   try {
     url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   } catch {
-    res.writeHead(400).end();
+    res.writeHead(400, SECURITY_HEADERS).end();
     return;
   }
   const path = url.pathname;
 
   if (req.method !== 'GET' && req.method !== 'POST') {
-    res.writeHead(405, { allow: 'GET, POST' }).end();
+    res.writeHead(405, { allow: 'GET, POST', ...SECURITY_HEADERS }).end();
     return;
   }
 
@@ -184,10 +191,23 @@ const server = createServer(async (req, res) => {
 
   // ---- Frontend -----------------------------------------------------------
   if (req.method !== 'GET') {
-    res.writeHead(405).end();
+    res.writeHead(405, { allow: 'GET', ...SECURITY_HEADERS }).end();
     return;
   }
   serveStatic(req, res, path);
+}
+
+const server = createServer((req, res) => {
+  route(req, res).catch((err) => {
+    // Uma excecao aqui nao pode derrubar o processo: responde 500 e segue.
+    log('error', `erro na requisicao: ${err.stack || err.message}`);
+    if (!res.headersSent) {
+      res.writeHead(500, { 'content-type': 'application/json; charset=utf-8', ...SECURITY_HEADERS });
+      res.end(JSON.stringify({ error: 'erro interno' }));
+    } else {
+      res.end();
+    }
+  });
 });
 
 server.listen(cfg.port, cfg.host, () => {
@@ -206,4 +226,7 @@ process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
 process.on('uncaughtException', (err) => {
   log('error', `excecao nao tratada: ${err.stack || err.message}`);
+});
+process.on('unhandledRejection', (reason) => {
+  log('error', `promise rejeitada sem tratamento: ${reason?.stack || reason}`);
 });

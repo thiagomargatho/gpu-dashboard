@@ -1,6 +1,6 @@
 [Unit]
 Description=GPU Dashboard - monitoramento do servidor, das GPUs e do Ollama
-Documentation=file:/home/margatho/projetos/gpu-dashboard/README.md
+Documentation=file:/home/margatho/gpu-dashboard/README.md
 After=network-online.target
 Wants=network-online.target
 
@@ -8,7 +8,7 @@ Wants=network-online.target
 Type=simple
 User=margatho
 Group=margatho
-WorkingDirectory=/home/margatho/projetos/gpu-dashboard
+WorkingDirectory=/home/margatho/gpu-dashboard
 ExecStart=/usr/bin/node server/index.js
 Environment=NODE_ENV=production
 
@@ -26,7 +26,10 @@ PrivateTmp=true
 ProtectSystem=strict
 ProtectKernelTunables=true
 ProtectKernelModules=true
+ProtectKernelLogs=true
 ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
 RestrictSUIDSGID=true
 RestrictNamespaces=true
 LockPersonality=true
@@ -35,8 +38,7 @@ LockPersonality=true
 # A escrita e liberada so nestes dois caminhos: o log e o config.json que a
 # aba Configuracoes grava. O codigo-fonte continua somente-leitura.
 ProtectHome=false
-ReadWritePaths=/home/margatho/projetos/gpu-dashboard/logs
-ReadWritePaths=/home/margatho/projetos/gpu-dashboard/config.json
+ReadWritePaths=/home/margatho/gpu-dashboard/logs /home/margatho/gpu-dashboard/config.json
 
 [Install]
 WantedBy=multi-user.target

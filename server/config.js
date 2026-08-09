@@ -87,6 +87,12 @@ export function updateConfig(patch) {
       errors.push(`"${key}" nao e editavel`);
       continue;
     }
+    // Numero de verdade apenas: Number(true)=1 e Number('')=0 nao podem entrar.
+    if (typeof raw === 'boolean' || raw === null || raw === undefined
+      || (typeof raw === 'string' && raw.trim() === '')) {
+      errors.push(`"${key}" precisa ser um numero`);
+      continue;
+    }
     const value = Number(raw);
     if (!Number.isFinite(value)) {
       errors.push(`"${key}" precisa ser numerico`);
